@@ -1,0 +1,173 @@
+#!/bin/bash
+
+echo "********** WELCOME TO NAGIOS INSTALLATION**********"
+############################################################################################
+#setenforce=0
+#systemctl status firewalld
+#systemctl stop firewalld
+#systemctl disable firewalld
+#systemctl status firewalld
+
+############################################################################################
+echo "Do you want to change hostname ?"
+echo "YES. 1"
+echo "NO. 2"
+
+read -p "Enter your choice:" choice
+
+if ((choice == 1))
+then
+	read -p "Enter Hostname: " hostname
+	hostnamectl set-hostname $hostname
+	changed=`hostname`
+	ip_o=`hostname -I | awk '{print $1}'`
+	echo $ip_o $changed >> /etc/hosts
+
+elif ((choice == 2))
+then
+	host=`hostname`
+	ip=`hostname -I | awk '{print $1}'`
+	echo $ip $host >> /etc/hosts
+
+fi
+
+############################################################################################
+echo "Add nodes to Hosts file"
+
+read -p "How many nodes you want to add: " nodes
+counter=1
+
+while ((counter <= $nodes)); do
+    read -rp "Add node entry to Hosts file (in the format IP hostname): " node_entry
+
+    if [[ -z "$node_entry" ]]; then
+        break
+    fi
+
+    echo "$node_entry" | sudo tee -a /etc/hosts
+
+    ((counter++))
+done
+
+echo "Node entry addition complete."
+
+
+############################################################################################
+
+#Now install epel, openhpc rpm
+
+yum install epel-release -y
+yum install http://build.openhpc.community/OpenHPC:/1.3/CentOS_7/x86_64/ohpc-release-1.3-1.el7.x86_64.rpm -y
+yum install httpd -y
+
+#Install utilities
+
+yum -y install yum-utils -y
+
+#Install core repo
+wget -P /etc/yum.repos.d https://xcat.org/files/xcat/repos/yum/latest/xcat-core/xcat-core.repo -y
+
+#Install Nagios Openhpc
+yum install ohpc-nagios -y
+
+#Start the nagios service
+systemctl start nagios
+systemctl enable nagios
+systemctl status nagios
+
+#Add and Start httpd
+yum install httpd -y
+systemctl start httpd
+systemctl status httpd
+
+#Set login and password 
+echo "Set the Login and password for Nagios"
+read -p "Enter username: " user
+read -p "Enter password: " password
+
+htpasswd -bc /etc/nagios/passwd $user $password
+
+#Now we need to make some changes to the conf.d
+cd /etc/nagios/conf.d
+
+sed -i '30,$d' hosts.cfg
+sed -i 's/members\ HOSTNAME1\,HOSTNAME2\,HOSTNAME3\,HOSTNAME4/members\ client/g' hosts.cfg
+sed -i 's/host_name\ HOSTNAME1/host_name\ client/g' hosts.cfg
+ipp=`cat /etc/hosts | grep client | awk '{ print $1 }'`
+sed -i 's/address\ HOST1_IP/address\ '"$ipp"'/g' hosts.cfg
+
+
+
+#change ownership for hosts.cfg and services.cfg
+
+chown -R nagios. /etc/nagios/conf.d/hosts.cfg
+
+#copy the services file
+
+cp services.cfg.example services.cfg
+
+chown -R nagios. /etc/nagios/conf.d/services.cfg
+
+#Restart the nagios services
+systemctl restart nagios
+
+#Pass nagios through firewall
+firewall-cmd --add-service=nagios --permanent
+firewall-cmd --reload
+
+
+########################################################################################################################################################################################
+########################################################################################################################################################################################
+#NOW FOR NODE PART OF INSTALLATION
+
+
+scp /etc/hosts root@node1:/etc/hosts
+
+ssh root@node1
+
+touch script.sh
+cat << EOF >> script.sh
+
+#!/bin/bash
+
+#Pass nagios through firewall
+firewall-cmd --add-service=nagios --permanent
+firewall-cmd --reload
+
+
+#To install repos
+yum install http://build.openhpc.community/OpenHPC:/1.3/CentOS_7/x86_64/ohpc-release-1.3-1.el7.x86_64.rpm -y
+
+#To install utilities
+
+yum -y install yum-utils -y
+
+#To install repos
+
+wget -P /etc/yum.repos.d https://xcat.org/files/xcat/repos/yum/latest/xcat-core/xcat-core.repo -y
+
+#To install nagios plugins
+
+yum install nagios-plugins-all-ohpc nrpe-ohpc -y
+
+cd /etc/nagios/
+
+ipp=`cat /etc/hosts | grep master | awk '{ print $1 }'`
+
+sed -i 's/allowed_hosts.*/allowed_hosts\=127\.0\.0\.1\,'"$ipp"'/g' /etc/nagios/nrpe.cfg
+
+systemctl start nrpe
+
+systemctl enable nrpe
+
+systemctl status nrpe
+
+mkdir /var/log/nagios
+chown -R nrpe:nrpe /var/log/nagios
+
+systemctl restart nrpe
+systemctl enable nrpe
+
+EOF
+
+bash script.sh

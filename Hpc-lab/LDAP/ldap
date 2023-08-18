@@ -1,0 +1,293 @@
+#ON MASTER AND NODE
+
+setenforce 0
+getenforce
+systemctl status firewalld
+systemctl stop firewalld
+systemctl disable firewalld
+systemctl status firewalld
+
+##################################################################################################################################
+hostname
+hostnamectl set-hostname ldap1.cdac.in
+
+cat /etc/hosts
+ip a
+vim /etc/hosts
+
+##################################################################################################################################
+#ON MASTER
+#INSTALL SERVICES
+
+yum install -y openldap-servers openldap-clients
+
+
+cp /usr/share/openldap-servers/DB_CONFIG.example  /var/lib/ldap/DB_CONFIG
+##################################################################################################################################
+#CHANGE OWNERSHIP
+chown ldap. /var/lib/ldap/DB_CONFIG 
+
+##################################################################################################################################
+#START SLAPD
+systemctl start slapd
+systemctl enable slapd
+systemctl status slapd
+
+##################################################################################################################################
+#TO SET PASSWORD
+
+[root@ldap1 ~]# slappasswd
+New password: 
+Re-enter new password: 
+{SSHA}Xw4kWMRG1Su3XeqSF/bMah5RCgDH54o+
+
+##################################################################################################################################
+#SET NEW PASSWORD TO OLCROOTPW FILE
+
+[root@ldap1 ~]# vi chrootpw.ldif
+[root@ldap1 ~]# cat chrootpw.ldif 
+dn: olcDatabase={0}config,cn=config
+changetype: modify
+add: olcRootPW
+olcRootPW: {SSHA}Xw4kWMRG1Su3XeqSF/bMah5RCgDH54o+
+
+##################################################################################################################################
+#WE ARE ADDING CHROOT FILE TO LDAP DATABASE
+
+[root@ldap1 ~]# ldapadd -Y EXTERNAL -H ldapi:/// -f chrootpw.ldif
+SASL/EXTERNAL authentication started
+SASL username: gidNumber=0+uidNumber=0,cn=peercred,cn=external,cn=auth
+SASL SSF: 0
+modifying entry "olcDatabase={0}config,cn=config"
+
+-Y: PROTOCOL
+PART OF SASL
+ANONYMOUS: USED FOR GUEST
+EXTERNAL : USED FOR LDAP
+THEY ARE AUTHENTICATION PROTOCOL
+
+-H :HOST 
+
+SCHEMA : PARAMETERS OR ATTRIBUTES (MAIL ,ID ,NAME ,NUMBER) IN DB
+
+#IMPORT BASIC SCHEMA which are already present and we are importing in our ldap
+
+##################################################################################################################################
+
+[root@ldap1 schema]# ldapadd -Y EXTERNAL -H ldapi:/// -f /etc/openldap/schema/cosine.ldif 
+SASL/EXTERNAL authentication started
+SASL username: gidNumber=0+uidNumber=0,cn=peercred,cn=external,cn=auth
+SASL SSF: 0
+adding new entry "cn=cosine,cn=schema,cn=config"
+
+##################################################################################################################################
+
+[root@ldap1 schema]# ldapadd -Y EXTERNAL -H ldapi:/// -f /etc/openldap/schema/nis.ldif 
+SASL/EXTERNAL authentication started
+SASL username: gidNumber=0+uidNumber=0,cn=peercred,cn=external,cn=auth
+SASL SSF: 0
+adding new entry "cn=nis,cn=schema,cn=config"
+
+
+##################################################################################################################################
+[root@ldap1 schema]# ldapadd -Y EXTERNAL -H ldapi:/// -f /etc/openldap/schema/inetorgperson.ldif 
+SASL/EXTERNAL authentication started[root@ldap1 ~]# vi chdomain.ldif
+
+
+SASL username: gidNumber=0+uidNumber=0,cn=peercred,cn=external,cn=auth
+SASL SSF: 0
+adding new entry "cn=inetorgperson,cn=schema,cn=config"
+
+##################################################################################################################################
+[root@ldap1 ~]# cat chdomain.ldif
+dn: olcDatabase={1}monitor,cn=config
+changetype: modify
+replace: olcAccess
+olcAccess: {0}to * by dn.base="gidNumber=0+uidNumber=0,cn=peercred,cn=external,cn=auth"
+  read by dn.base="cn=Manager,dc=cdac,dc=in" read by * none
+
+dn: olcDatabase={2}hdb,cn=config
+changetype: modify
+replace: olcSuffix
+olcSuffix: dc=cdac,dc=in
+
+dn: olcDatabase={2}hdb,cn=config
+changetype: modify
+replace: olcRootDN
+olcRootDN: cn=Manager,dc=cdac,dc=in
+
+dn: olcDatabase={2}hdb,cn=config
+changetype: modify
+add: olcRootPW
+olcRootPW: {SSHA}Xw4kWMRG1Su3XeqSF/bMah5RCgDH54o+
+
+dn: olcDatabase={2}hdb,cn=config
+changetype: modify
+add: olcAccess
+olcAccess: {0}to attrs=userPassword,shadowLastChange by
+  dn="cn=Manager,dc=cdac,dc=in" write by anonymous auth by self write by * none
+olcAccess: {1}to dn.base="" by * read
+olcAccess: {2}to * by dn="cn=Manager,dc=cdac,dc=in" write by * read
+
+##################################################################################################################################
+[root@ldap1 ~]# ldapmodify -Y EXTERNAL -H ldapi:/// -f chdomain.ldif
+SASL/EXTERNAL authentication started
+SASL username: gidNumber=0+uidNumber=0,cn=peercred,cn=external,cn=auth
+SASL SSF: 0
+modifying entry "olcDatabase={1}monitor,cn=config"
+
+modifying entry "olcDatabase={2}hdb,cn=config"
+
+modifying entry "olcDatabase={2}hdb,cn=config"
+
+modifying entry "olcDatabase={2}hdb,cn=config"
+
+modifying entry "olcDatabase={2}hdb,cn=config"
+
+##################################################################################################################################
+[root@ldap1 ~]# vi basedomain.ldif
+[root@ldap1 ~]# cat basedomain.ldif
+dn: dc=cdac,dc=in
+objectClass: top
+objectClass: dcObject
+objectclass: organization
+o: cdac in
+dc: cdac
+
+dn: cn=Manager,dc=cdac,dc=in
+objectClass: organizationalRole
+cn: Manager
+description: Directory Manager
+
+dn: ou=People,dc=cdac,dc=in
+objectClass: organizationalUnit
+ou: People
+
+dn: ou=Group,dc=cdac,dc=in
+objectClass: organizationalUnit
+ou: Group
+
+##################################################################################################################################
+[root@ldap1 ~]# ldapadd -x -D cn=Manager,dc=cdac,dc=in -W -f basedomain.ldif 
+Enter LDAP Password: 
+adding new entry "dc=cdac,dc=in"
+
+adding new entry "cn=Manager,dc=cdac,dc=in"
+
+adding new entry "ou=People,dc=cdac,dc=in"
+
+adding new entry "ou=Group,dc=cdac,dc=in"
+
+
+##################################################################################################################################
+
+
+
+[root@ldap1 ~]# vim ldapuser.ldif
+[root@ldap1 ~]# ldapadd -x -D cn=Manager,dc=cdac,dc=in -W -f ldapuser.ldif
+Enter LDAP Password: 
+adding new entry "uid=user1,ou=People,dc=cdac,dc=in"
+
+adding new entry "cn=user1,ou=Group,dc=cdac,dc=in"
+
+[root@ldap1 ~]# cat ldapuser.ldif 
+dn: uid=user1,ou=People,dc=cdac,dc=in
+objectClass: inetOrgPerson
+objectClass: posixAccount
+objectClass: shadowAccount
+cn: user1
+sn: test
+userPassword: {SSHA}Xw4kWMRG1Su3XeqSF/bMah5RCgDH54o+
+loginShell: /bin/bash
+uidNumber: 1001
+gidNumber: 1001
+homeDirectory: /home/user1
+
+dn: cn=user1,ou=Group,dc=cdac,dc=in
+objectClass: posixGroup
+cn: user1
+gidNumber: 1001
+
+##################################################################################################################################
+ON CLIENT MACHINE
+
+yum -y install openldap-clients nss-pam-ldapd
+
+authconfig --enableldap --enableldapauth --ldapserver=192.168.100.134 --ldapbasedn="dc=cdac,dc=in" --enablemkhomedir --update
+##################################################################################################################################
+systemctl restart nslcd
+
+ldapsearch -x
+##################################################################################################################################
+vim /etc/nsswitch.conf
+insert ldap infront 
+(order-->files--> sss-->ldap)
+##################################################################################################################################
+systemctl restart nslcd
+
+getent passwd
+##################################################################################################################################
+if permission is denied for ssh
+
+vim /etc/pam.d/password-auth-ac
+
+
+
+#%PAM-1.0
+# This file is auto-generated.
+# User changes will be destroyed the next time authconfig is run.
+auth        required      pam_env.so
+auth        required      pam_faildelay.so delay=2000000
+auth        [default=1 ignore=ignore success=ok] pam_succeed_if.so uid >= 1000 quiet
+auth        [default=1 ignore=ignore success=ok] pam_localuser.so
+auth        sufficient    pam_unix.so nullok try_first_pass
+auth        requisite     pam_succeed_if.so uid >= 1000 quiet_success
+auth        sufficient    pam_sss.so forward_pass
+auth        required      pam_deny.so
+
+account     required      pam_unix.so broken_shadow
+account     sufficient    pam_localuser.so
+account     sufficient    pam_succeed_if.so uid < 1000 quiet
+account     [default=bad success=ok user_unknown=ignore] pam_sss.so
+account     required      pam_permit.so
+
+password    requisite     pam_pwquality.so try_first_pass local_users_only retry=3 authtok_type=
+password    sufficient    pam_unix.so sha512 shadow nullok try_first_pass use_authtok
+password    sufficient    pam_sss.so use_authtok
+
+
+password    required      pam_deny.so
+
+session     optional      pam_keyinit.so revoke
+session     required      pam_limits.so
+-session     optional      pam_systemd.so
+session     optional      pam_oddjob_mkhomedir.so umask=0077
+session     [success=1 default=ignore] pam_succeed_if.so service in crond quiet use_uid
+session     required      pam_unix.so
+session     optional      pam_sss.so
+
+
+
+
+yum --enablerepo=epel -y install phpldapadmin
+   71  vi /etc/phpldapadmin/config.php
+   72  vi /etc/httpd/conf.d/phpldapadmin.conf
+   
+   
+   
+   # install from EPEL
+[root@dlp ~]# yum --enablerepo=epel -y install phpldapadmin
+[root@dlp ~]# vi /etc/phpldapadmin/config.php
+# line 397: uncomment, line 398: comment out
+$servers->setValue('login','attr','dn');
+// $servers->setValue('login','attr','uid');
+[root@dlp ~]# vi /etc/httpd/conf.d/phpldapadmin.conf
+Alias /phpldapadmin /usr/share/phpldapadmin/htdocs
+Alias /ldapadmin /usr/share/phpldapadmin/htdocs
+<Directory /usr/share/phpldapadmin/htdocs>
+  <IfModule mod_authz_core.c>
+    # Apache 2.4
+    # line 12: add access permission
+    Require local
+    Require ip 10.0.0.0/24
+[root@dlp ~]# systemctl restart httpd
